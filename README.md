@@ -1,12 +1,14 @@
 # Flashcard Study App
 
+[![CI](https://github.com/sanimanqezu/flashcard-study-app/actions/workflows/ci.yml/badge.svg)](https://github.com/sanimanqezu/flashcard-study-app/actions/workflows/ci.yml)
+
 A full-stack spaced repetition flashcard application built for efficient memorization. Study smarter — not longer — by reviewing cards exactly when you're about to forget them.
 
 ## Tech Stack
 
 | Layer    | Technology                                      |
 |----------|-------------------------------------------------|
-| Backend  | Java 17, Spring Boot 3.2.5, Spring Security, JJWT 0.12.3 |
+| Backend  | Java 25, Spring Boot 3.5.16, Spring Security, JJWT 0.12.3 |
 | Database | PostgreSQL 16, Flyway migrations                |
 | ORM      | Spring Data JPA + Hibernate                     |
 | Frontend | Next.js 15, React 19, TypeScript, Tailwind CSS 4 |
@@ -56,6 +58,16 @@ If rating >= 3 (GOOD or EASY):
 
 ---
 
+## Key Design Points
+
+- **Stateless JWT security** — a single `SecurityFilterChain` runs a `JwtAuthFilter` before the username/password filter; sessions are `STATELESS` and only `/api/auth/**` is public.
+- **Ownership enforced in the service layer** — every deck/card lookup goes through `getDeckForUser` / `getCardForUser`, which raise `AccessDeniedException` when the authenticated user does not own the resource, so controllers never leak another user's data.
+- **Centralized exception handling** — a single `@RestControllerAdvice` maps domain exceptions to HTTP status with a consistent JSON error body (`timestamp`, `status`, `message`, optional `details`): validation → 400, `NoSuchElementException` → 404, `AccessDeniedException` → 403, `BadCredentialsException` → 401.
+- **Pure, testable algorithm** — `applySpacedRepetition` mutates a `Card` with no I/O, making the SM-2 schedule fully unit-testable in isolation.
+- **Schema owned by Flyway** — production runs with `ddl-auto: validate` against Flyway-managed migrations; Hibernate never alters the live schema.
+
+---
+
 ## Features
 
 - **JWT Authentication** — register, login, stateless sessions
@@ -72,8 +84,8 @@ If rating >= 3 (GOOD or EASY):
 ## Getting Started
 
 ### Prerequisites
-- Java 17+
-- Node.js 20+
+- Java 25+
+- Node.js 22+
 - PostgreSQL 16+ (or Docker)
 
 ### Run with Docker Compose
@@ -91,12 +103,27 @@ docker-compose up --build
 ### Run Locally
 
 **Backend**
-```bash
-cd backend
 
-# Start PostgreSQL (or use Docker):
+The backend connects to a centralized PostgreSQL instance, configured entirely through environment variables (sensible `localhost` defaults are provided in `application.yml`):
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `DB_HOST` | `localhost` | Postgres host |
+| `DB_PORT` | `5432` | Postgres port |
+| `DB_NAME` | `flashcard_db` | Database name |
+| `DB_USERNAME` | `postgres` | Database user |
+| `DB_PASSWORD` | `postgres` | Database password |
+| `JWT_SECRET` | dev fallback | HS256 signing key |
+
+```bash
+# 1. Point the app at your centralized Postgres (skip for localhost defaults):
+export DB_HOST=... DB_PORT=5432 DB_NAME=flashcard_db DB_USERNAME=... DB_PASSWORD=...
+
+# ...or run a throwaway instance locally:
 docker run -d --name pg -e POSTGRES_DB=flashcard_db -e POSTGRES_PASSWORD=postgres -p 5432:5432 postgres:16-alpine
 
+# 2. Flyway applies migrations on boot, then start the API:
+cd backend
 mvn spring-boot:run
 ```
 
@@ -108,14 +135,20 @@ npm install
 npm run dev
 ```
 
-### Run Backend Tests
+### Tests
 
 ```bash
 cd backend
 mvn test
 ```
 
-The test suite covers all 8 SM-2 algorithm cases: AGAIN reset, HARD reset, GOOD first/second/third repetitions, EASY ease factor increase, ease factor floor (1.3), and a multi-step progression sequence.
+The backend suite has **26 tests** across three layers, all self-contained (no real database or network — an in-memory H2 datasource backs the Spring context):
+
+| Layer | Class | What it covers |
+|-------|-------|----------------|
+| Algorithm | `SpacedRepetitionTest` (8) | Every SM-2 case: AGAIN/HARD reset, GOOD first/second/third repetitions, EASY ease-factor increase, ease-factor floor (1.3), and a multi-step progression sequence |
+| Service | `CardServiceTest` (10) | `@ExtendWith(MockitoExtension.class)` — happy paths, not-found (`NoSuchElementException`), ownership (`AccessDeniedException`), the 20-card due cap, review scheduling, and mastery-percentage math including the empty-deck edge case |
+| Controller | `CardControllerTest` (8) | `@WebMvcTest` + `@MockitoBean` — status codes (200/201/204), delegation, bean-validation → 400, and `@RestControllerAdvice` mapping of 404/403 error bodies |
 
 ---
 
@@ -160,7 +193,7 @@ flashcard-study-app/
 │   ├── src/main/resources/
 │   │   ├── application.yml
 │   │   └── db/migration/V1__create_tables.sql
-│   └── src/test/            # SpacedRepetitionTest (8 test cases)
+│   └── src/test/            # SpacedRepetitionTest, CardServiceTest, CardControllerTest (26 tests)
 │
 ├── frontend/
 │   └── src/

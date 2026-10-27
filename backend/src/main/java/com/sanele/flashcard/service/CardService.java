@@ -99,7 +99,7 @@ public class CardService {
      * Simplified SM-2 spaced repetition algorithm.
      * Ratings: AGAIN=0, HARD=1, GOOD=3, EASY=5
      */
-    void applySpacedRepetition(Card card, int rating) {
+    public void applySpacedRepetition(Card card, int rating) {
         LocalDate today = LocalDate.now();
 
         if (rating < 3) {
